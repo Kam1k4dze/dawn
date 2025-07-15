@@ -46,6 +46,7 @@ class SampleBase {
   protected:
     virtual bool SetupImpl() = 0;
     virtual void FrameImpl() = 0;
+    virtual void OnResize(uint32_t newWidth, uint32_t newHeight) {}
 
     wgpu::Instance instance = nullptr;
     wgpu::Adapter adapter = nullptr;
@@ -56,14 +57,19 @@ class SampleBase {
 
     wgpu::TextureFormat GetPreferredSurfaceTextureFormat() { return preferredSurfaceTextureFormat; }
 
+    uint32_t GetWidth() const { return width; }
+    uint32_t GetHeight() const { return height; }
+
   private:
     bool Setup();
+    void DoResize(uint32_t newWidth, uint32_t newHeight);
 
     static constexpr uint32_t kWidth = 640;
     static constexpr uint32_t kHeight = 480;
     uint32_t width = kWidth;
     uint32_t height = kHeight;
     wgpu::TextureFormat preferredSurfaceTextureFormat = wgpu::TextureFormat::BGRA8Unorm;
+    wgpu::SurfaceConfiguration surfaceConfig;
 
 #ifndef __EMSCRIPTEN__
     GLFWwindow* window = nullptr;

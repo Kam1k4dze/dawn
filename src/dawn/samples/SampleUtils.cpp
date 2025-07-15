@@ -59,6 +59,7 @@ static wgpu::BackendType backendType = wgpu::BackendType::Undefined;
 static wgpu::AdapterType adapterType = wgpu::AdapterType::Unknown;
 static std::vector<std::string> enableToggles;
 static std::vector<std::string> disableToggles;
+static wgpu::PresentMode presentMode = wgpu::PresentMode::Undefined;
 
 bool InitSample(int argc, const char** argv) {
     dawn::utils::CommandLineParser opts;
@@ -89,6 +90,15 @@ bool InitSample(int argc, const char** argv) {
                                    "adapter-type", "The type of adapter to request")
                                .ShortName('a')
                                .Default(wgpu::AdapterType::Unknown);
+    auto& presentModeOpt = 
+        opts.AddEnum<wgpu::PresentMode>({
+                {"fifo", wgpu::PresentMode::Fifo},
+                {"mailbox", wgpu::PresentMode::Mailbox},
+                {"immediate", wgpu::PresentMode::Immediate},
+            }, 
+            "present-mode", "Presentation mode (fifo, mailbox, immediate)")
+            .ShortName('p')
+            .Default(wgpu::PresentMode::Undefined);
 
     auto result = opts.Parse(argc, argv);
     if (!result.success) {
@@ -101,7 +111,8 @@ bool InitSample(int argc, const char** argv) {
         opts.PrintHelp(std::cout);
         return false;
     }
-
+    
+    presentMode = presentModeOpt.GetValue();
     backendType = backendOpt.GetValue();
     adapterType = adapterTypeOpt.GetValue();
     enableToggles = enableTogglesOpt.GetOwnedValue();
@@ -277,6 +288,13 @@ int SampleBase::Run(unsigned int delay) {
         return 1;
     }
 
+    // Set resize callback
+    glfwSetWindowUserPointer(sample->window, sample);
+    glfwSetWindowSizeCallback(sample->window, [](GLFWwindow* window, int width, int height) {
+        SampleBase* sample = static_cast<SampleBase*>(glfwGetWindowUserPointer(window));
+        sample->DoResize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+    });
+
     while (!glfwWindowShouldClose(sample->window)) {
         sample->FrameImpl();
         wgpu::Status presentStatus = sample->surface.Present();
@@ -314,6 +332,12 @@ bool SampleBase::Setup() {
         return false;
     }
 
+    // Get actual window size (may differ from requested)
+    int actualWidth, actualHeight;
+    glfwGetWindowSize(window, &actualWidth, &actualHeight);
+    width = static_cast<uint32_t>(actualWidth);
+    height = static_cast<uint32_t>(actualHeight);
+
     // Create the surface.
     surface = wgpu::glfw::CreateSurfaceForWindow(instance, window);
 #else
@@ -329,15 +353,43 @@ bool SampleBase::Setup() {
     // Configure the surface.
     wgpu::SurfaceCapabilities capabilities;
     surface.GetCapabilities(adapter, &capabilities);
-    wgpu::SurfaceConfiguration config = {};
-    config.device = device;
-    config.format = capabilities.formats[0];
-    config.width = width;
-    config.height = height;
+    surfaceConfig.device = device;
+    surfaceConfig.format = capabilities.formats[0];
+    surfaceConfig.width = width;
+    surfaceConfig.height = height;
     DAWN_ASSERT(capabilities.presentModeCount > 0);
-    config.presentMode = capabilities.presentModes[0];
-    surface.Configure(&config);
+    if (presentMode != wgpu::PresentMode::Undefined) {
+        // Check if requested mode is available
+        bool found = false;
+        for (uint32_t i = 0; i < capabilities.presentModeCount; ++i) {
+            if (capabilities.presentModes[i] == presentMode) {
+                surfaceConfig.presentMode = presentMode;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            dawn::WarningLog() << "Requested present mode not available. Using default";
+            surfaceConfig.presentMode = capabilities.presentModes[0];
+        }
+    } else {
+        surfaceConfig.presentMode = capabilities.presentModes[0];
+    }
+    surface.Configure(&surfaceConfig);
     this->preferredSurfaceTextureFormat = capabilities.formats[0];
 
     return SetupImpl();
+}
+
+void SampleBase::DoResize(uint32_t newWidth, uint32_t newHeight) {
+    if (newWidth == 0 || newHeight == 0) {
+        return; // Ignore minimized window
+    }
+
+    width = newWidth;
+    height = newHeight;
+    surfaceConfig.width = newWidth;
+    surfaceConfig.height = newHeight;
+    surface.Configure(&surfaceConfig);
+    OnResize(newWidth, newHeight);
 }
